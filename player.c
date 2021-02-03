@@ -302,15 +302,35 @@ static int decode_thread(void *data) {
         rc = packetQueue_dequeue(info->video_q, &pkt, 1, info);
         if (rc < 0) break;
         
-        avcodec_decode_video2(info->v_c, info->v_frame, &got_pic, &pkt);
-        if (got_pic) {
-            rc = frame_enqueue(info->v_frame, info);
+        rc = avcodec_send_packet(info->v_c, &pkt);
+        
+        while (rc == 0) {
+            rc = avcodec_receive_frame(info->v_c, info->v_frame);
+            if (rc == AVERROR(EAGAIN) || rc == AVERROR_EOF) {
+                rc = 0;
+                break;
+            } else if (rc == AVERROR(EINVAL)) {
+                rc = -1;
+                break;
+            } else {
+                rc = frame_enqueue(info->v_frame, info);
+            }
         }
         
         av_packet_unref(&pkt);
         
         if (rc < 0) break;
     }
+    
+    if (rc < 0) {
+        SDL_LockMutex(info->w_mutex);
+        
+        info->err_code = rc;
+        av_log(NULL, AV_LOG_ERROR, "failed to decode frame, codec is broken\n");
+        
+        SDL_UnlockMutex(info->w_mutex);
+    }
+    
     return rc;
 }
 
